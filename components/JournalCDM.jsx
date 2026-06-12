@@ -411,6 +411,8 @@ export default function CarnetParis() {
   const [preuveEnAttente, setPreuveEnAttente] = useState(null); // { id, resultat }
   const [envoiPreuve, setEnvoiPreuve] = useState(false);
   const [errPreuve, setErrPreuve] = useState(null);
+  const [envoiTicket, setEnvoiTicket] = useState(null); // id du ticket dont la preuve s'envoie
+  const [errTicket, setErrTicket] = useState(null);
   const [preuveVue, setPreuveVue] = useState(null); // { titre, image|null, erreur? }
   const [joueurVu, setJoueurVu] = useState(null); // cle du joueur consulté
   const [partageOuvert, setPartageOuvert] = useState(false);
@@ -546,8 +548,8 @@ export default function CarnetParis() {
         investi: s.investi,
         recharges: recharges.map(({ id, ts, date, montant }) => ({ id, ts, date, montant })),
         reussite: s.reussite, last5: s.last5, courbe: s.courbePct, maj: Date.now(),
-        paris: paris.map(({ id, ts, date, match, cote, mise, resultat, preuve }) =>
-          ({ id, ts, date, match, cote, mise, resultat, preuve: !!preuve })),
+        paris: paris.map(({ id, ts, date, match, cote, mise, resultat, preuve, preuveTicket }) =>
+          ({ id, ts, date, match, cote, mise, resultat, preuve: !!preuve, preuveTicket: !!preuveTicket })),
       };
       sauverMoi(profil.pseudo, { depart, paris, reglesVues, departVerifie, recharges }, entree).catch(() => {});
     }, 500);
@@ -586,8 +588,8 @@ export default function CarnetParis() {
   const stats = useMemo(() => calcStats(paris, depart, recharges), [paris, depart, recharges]);
 
   const joueurs = useMemo(() => {
-    const mesParisPartages = paris.map(({ id, ts, date, match, cote, mise, resultat, preuve }) =>
-      ({ id, ts, date, match, cote, mise, resultat, preuve: !!preuve }));
+    const mesParisPartages = paris.map(({ id, ts, date, match, cote, mise, resultat, preuve, preuveTicket }) =>
+      ({ id, ts, date, match, cote, mise, resultat, preuve: !!preuve, preuveTicket: !!preuveTicket }));
     const moi = profil ? {
       pseudo: profil.pseudo, cle: profil.cle, depart, departVerifie, bankroll: stats.actuelle,
       pnl: stats.pnlTotal, pnlPct: stats.pctVsDepart, reussite: stats.reussite,
@@ -627,6 +629,7 @@ export default function CarnetParis() {
       mise: Math.round(num(form.mise) * 100) / 100,
       resultat: "En cours",
       preuve: false,
+      preuveTicket: false,
     }]);
     setForm({ date: form.date, match: "", cote: "", mise: form.mise });
   };
@@ -666,6 +669,25 @@ export default function CarnetParis() {
       setErrPreuve("Échec de l'envoi côté stockage : " + (e?.message || "erreur inconnue") + ". Réessaie dans quelques secondes.");
     }
     setEnvoiPreuve(false);
+  };
+
+  // Screenshot du ticket placé (preuve « ticket avant le match »), dispo même En cours
+  const envoyerPreuveTicket = async (b, file) => {
+    if (!profil) return;
+    setEnvoiTicket(b.id); setErrTicket(null);
+    let image;
+    try { image = await compresserAdaptatif(file); }
+    catch (err) {
+      setErrTicket(messagePreuveErreur(err, file));
+      setEnvoiTicket(null); return;
+    }
+    try {
+      await sauverPreuve(b.id + ":ticket", image);
+      setParis((prev) => prev.map((x) => (x.id === b.id ? { ...x, preuveTicket: true } : x)));
+    } catch (e) {
+      setErrTicket("Échec de l'envoi côté stockage : " + (e?.message || "erreur inconnue") + ". Réessaie.");
+    }
+    setEnvoiTicket(null);
   };
 
   const validerBankroll = async (file) => {
@@ -738,7 +760,10 @@ export default function CarnetParis() {
     if (confirmSuppr !== id) { setConfirmSuppr(id); return; }
     setParis((prev) => prev.filter((b) => b.id !== id));
     setConfirmSuppr(null);
-    if (profil) supprimerPreuve(id).catch(() => {});
+    if (profil) {
+      supprimerPreuve(id).catch(() => {});
+      supprimerPreuve(id + ":ticket").catch(() => {});
+    }
   };
 
   const inscrire = async () => {
@@ -1703,7 +1728,23 @@ export default function CarnetParis() {
                             📷 preuve
                           </button>
                         )}
+                        {b.preuveTicket ? (
+                          <button onClick={() => voirPreuve(profil.cle, { id: b.id + ":ticket", match: b.match, resultat: "Ticket placé" })}
+                            className="mono"
+                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" }}>
+                            🎫 ticket
+                          </button>
+                        ) : (
+                          <label className="mono" style={{ cursor: envoiTicket === b.id ? "wait" : "pointer", color: "var(--dim)", textDecoration: "underline dotted", textUnderlineOffset: 2 }}>
+                            {envoiTicket === b.id ? "envoi…" : "📎 joindre le ticket"}
+                            <input type="file" accept="image/*" style={{ display: "none" }} disabled={envoiTicket === b.id}
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) envoyerPreuveTicket(b, f); e.target.value = ""; }} />
+                          </label>
+                        )}
                       </div>
+                      {errTicket && envoiTicket === null && (
+                        <div className="mono mt-1" style={{ fontSize: 10, color: "var(--perdu)" }}>{errTicket}</div>
+                      )}
                       <button onClick={() => supprimer(b.id)}
                         className="mono mt-2 uppercase"
                         style={{
@@ -1990,6 +2031,15 @@ export default function CarnetParis() {
                       <span className="font-semibold truncate" style={{ fontSize: 13, display: "block" }}>{b.match}</span>
                       <span className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
                         cote {String(b.cote).replace(".", ",")} · mise {eur(b.mise)}
+                        {b.preuveTicket && (
+                          <>
+                            {" · "}
+                            <button onClick={() => voirPreuve(joueurOuvert.cle, { id: b.id + ":ticket", match: b.match, resultat: "Ticket placé" })} className="mono"
+                              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" }}>
+                              🎫 voir le ticket
+                            </button>
+                          </>
+                        )}
                         {b.preuve ? (
                           <>
                             {" · "}
