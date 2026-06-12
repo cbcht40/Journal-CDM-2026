@@ -397,7 +397,18 @@ export default function CarnetParis() {
       if (u) { try { localStorage.setItem("cdm_compte_existant", "1"); } catch (e) {} }
       setUtilisateur((prev) => (prev?.id === u?.id ? prev : u));
     };
-    supabase.auth.getSession().then(({ data }) => appliquer(data.session));
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) { appliquer(null); return; }
+      // Vérifie que le compte existe toujours côté serveur (ex. doublon
+      // supprimé dans le dashboard) — sinon on purge la session locale.
+      const { error } = await supabase.auth.getUser();
+      if (error) {
+        try { await supabase.auth.signOut(); } catch (e) {}
+        appliquer(null);
+        return;
+      }
+      appliquer(data.session);
+    });
     const { data: ecoute } = supabase.auth.onAuthStateChange((_e, session) => appliquer(session));
     return () => { actif = false; ecoute.subscription.unsubscribe(); };
   }, []);
@@ -820,6 +831,13 @@ export default function CarnetParis() {
             </button>
           </div>
           {errPseudo && <p className="mono mt-2" style={{ fontSize: 10, color: "var(--perdu)" }}>{errPseudo}</p>}
+          <p className="mono mt-3" style={{ fontSize: 10, color: "var(--dim)" }}>
+            Connecté avec {utilisateur.email} —{" "}
+            <button onClick={() => deconnecter()}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: "inherit", textDecoration: "underline" }}>
+              changer de compte
+            </button>
+          </p>
           <p className="mono mt-4" style={{ fontSize: 10, color: "var(--dim)", lineHeight: 1.6 }}>
             Transparence totale : ton carnet (tickets, cotes, mises, résultats) est visible par tous les inscrits,
             et tamponner Gagné ou Perdu exige un screenshot que n'importe quel inscrit peut consulter.
