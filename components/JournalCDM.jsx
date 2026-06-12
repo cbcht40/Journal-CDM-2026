@@ -380,12 +380,21 @@ export default function CarnetParis() {
   const [preuveVue, setPreuveVue] = useState(null); // { titre, image|null, erreur? }
   const [joueurVu, setJoueurVu] = useState(null); // cle du joueur consulté
 
+  // Au retour d'un joueur déjà inscrit, on présente « Se connecter » plutôt
+  // que « Créer mon compte » (évite les doublons de compte par mégarde).
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("cdm_compte_existant") === "1") setAuthMode("connexion");
+    } catch (e) { /* stockage indisponible */ }
+  }, []);
+
   useEffect(() => {
     if (!supabase) { setSansStockage(true); setChargement(false); return; }
     let actif = true;
     const appliquer = (session) => {
       if (!actif) return;
       const u = session?.user ? { id: session.user.id, email: session.user.email } : null;
+      if (u) { try { localStorage.setItem("cdm_compte_existant", "1"); } catch (e) {} }
       setUtilisateur((prev) => (prev?.id === u?.id ? prev : u));
     };
     supabase.auth.getSession().then(({ data }) => appliquer(data.session));
@@ -644,6 +653,8 @@ export default function CarnetParis() {
       }
     } catch (e) {
       setAuthErreur(traduireErreurAuth(e?.message));
+      // L'email est déjà pris : on bascule sur l'écran de connexion.
+      if ((e?.message || "").includes("already registered")) setAuthMode("connexion");
     }
     setAuthEnCours(false);
   };
