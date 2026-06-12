@@ -482,6 +482,16 @@ export default function CarnetParis() {
     setRappelsPlusTard(true);
   };
 
+  const [installPlusTard, setInstallPlusTard] = useState(true);
+  useEffect(() => {
+    try { setInstallPlusTard(sessionStorage.getItem("cdm_install_plus_tard") === "1"); }
+    catch (e) { setInstallPlusTard(false); }
+  }, []);
+  const passerInstall = () => {
+    try { sessionStorage.setItem("cdm_install_plus_tard", "1"); } catch (e) {}
+    setInstallPlusTard(true);
+  };
+
   useEffect(() => {
     if (!supabase) return;
     if (!utilisateur) {
@@ -880,6 +890,39 @@ export default function CarnetParis() {
             Ajoute NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY dans les
             variables d'environnement Vercel, puis redéploie (voir README).
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- iPhone via Safari : installer l'app AVANT de créer le compte ----------
+  // (l'app installée a ses propres données : créer le compte dedans évite une double connexion)
+  if (surIOS && !installee && !installPlusTard && !recuperation) {
+    return (
+      <div className="cdm min-h-screen flex items-center justify-center px-4 py-6">
+        <style>{CSS}</style>
+        <div className="panel p-6 w-full" style={{ maxWidth: 430 }}>
+          <div className="mono uppercase mb-2" style={{ fontSize: 9, letterSpacing: 2, color: "var(--or)" }}>
+            Avant de commencer
+          </div>
+          <div className="disp uppercase" style={{ fontSize: 24, lineHeight: 1.2 }}>
+            Journal CDM 2026
+          </div>
+          <p className="mt-4" style={{ fontSize: 14, lineHeight: 1.6 }}>
+            Installe d'abord l'app sur ton écran d'accueil : tu auras l'icône ⚽, les rappels
+            quotidiens, et tu ne feras ton compte qu'<b>une seule fois</b>.
+          </p>
+          <div className="mt-4 rounded-xl p-4" style={{ background: "var(--craie)", border: "1px solid var(--ligne)" }}>
+            <ol style={{ fontSize: 14, lineHeight: 2, paddingLeft: 18, margin: 0 }}>
+              <li>Touche <b>Partager</b> (carré avec flèche ⬆️, en bas)</li>
+              <li>Choisis <b>« Sur l'écran d'accueil »</b></li>
+              <li>Ouvre l'app depuis l'icône ⚽ et crée ton compte dedans</li>
+            </ol>
+          </div>
+          <button onClick={passerInstall} className="mono mt-5"
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: 10, textDecoration: "underline" }}>
+            Continuer dans Safari quand même (tu devras te reconnecter dans l'app plus tard)
+          </button>
         </div>
       </div>
     );
