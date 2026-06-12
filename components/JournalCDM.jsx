@@ -376,6 +376,10 @@ export default function CarnetParis() {
   const [recupEnCours, setRecupEnCours] = useState(false);
   const [rappels, setRappels] = useState("inconnu"); // inconnu | dispo | actifs | indispo
   const [rappelsMsg, setRappelsMsg] = useState(null);
+  const [surIOS, setSurIOS] = useState(false);
+  const [installee, setInstallee] = useState(true); // app sur l'écran d'accueil (requis sur iOS seulement)
+  const [installPrompt, setInstallPrompt] = useState(null); // invite d'installation (Android/desktop)
+  const [rappelsPlusTard, setRappelsPlusTard] = useState(true);
   const [erreurChargement, setErreurChargement] = useState(false);
   const [tentative, setTentative] = useState(0);
   const [errPseudo, setErrPseudo] = useState(null);
@@ -457,6 +461,26 @@ export default function CarnetParis() {
       .then((abo) => setRappels(abo ? "actifs" : "dispo"))
       .catch(() => setRappels("dispo"));
   }, []);
+
+  // Détection de l'appareil pour l'étape « rappels obligatoires »
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { setRappelsPlusTard(sessionStorage.getItem("cdm_rappels_plus_tard") === "1"); }
+    catch (e) { setRappelsPlusTard(false); }
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    setSurIOS(ios);
+    const standalone = window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone || false;
+    // Hors iOS, les notifications marchent sans installer : seul iOS exige l'app sur l'écran d'accueil
+    setInstallee(standalone || !ios);
+    const surInvite = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener("beforeinstallprompt", surInvite);
+    return () => window.removeEventListener("beforeinstallprompt", surInvite);
+  }, []);
+
+  const passerRappels = () => {
+    try { sessionStorage.setItem("cdm_rappels_plus_tard", "1"); } catch (e) {}
+    setRappelsPlusTard(true);
+  };
 
   useEffect(() => {
     if (!supabase) return;
@@ -1126,6 +1150,60 @@ export default function CarnetParis() {
               Mode aperçu : l'envoi de preuve est indisponible ici.
             </p>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- Étape rappels : installation + notifications (revient à chaque visite tant que pas fait) ----------
+  if (!rappelsPlusTard && (!installee || rappels === "dispo")) {
+    return (
+      <div className="cdm min-h-screen flex items-center justify-center px-4 py-6">
+        <style>{CSS}</style>
+        <div className="panel p-6 w-full" style={{ maxWidth: 430 }}>
+          <div className="mono uppercase mb-2" style={{ fontSize: 9, letterSpacing: 2, color: "var(--or)" }}>
+            Dernière étape · Obligatoire pour les vrais
+          </div>
+          <div className="disp uppercase" style={{ fontSize: 22, lineHeight: 1.2 }}>
+            Ne rate aucun match
+          </div>
+          <p className="mt-3" style={{ fontSize: 14, lineHeight: 1.6 }}>
+            La compèt' dure <b>5 semaines</b>. Un carnet pas à jour = un classement faussé pour
+            tout le monde. Deux rappels par jour — <b>10h</b> (tickets du jour) et <b>22h</b> (tamponner
+            les résultats) — et c'est réglé.
+          </p>
+          {!installee ? (
+            <div className="mt-4 rounded-xl p-4" style={{ background: "var(--craie)", border: "1px solid var(--ligne)" }}>
+              <div className="mono uppercase font-bold" style={{ fontSize: 10, letterSpacing: 1.5 }}>
+                📲 Installe l'app — 10 secondes chrono
+              </div>
+              <ol className="mt-2" style={{ fontSize: 13, lineHeight: 1.9, paddingLeft: 18, margin: 0 }}>
+                <li>Touche le bouton <b>Partager</b> (le carré avec la flèche ⬆️, en bas de Safari)</li>
+                <li>Choisis <b>« Sur l'écran d'accueil »</b></li>
+                <li>Rouvre l'app depuis la nouvelle icône ⚽ — elle te proposera les rappels</li>
+              </ol>
+            </div>
+          ) : (
+            <>
+              <button onClick={activerRappels}
+                className="rounded-lg px-4 py-3 font-semibold w-full mt-4"
+                style={{ background: "var(--pelouse)", color: "#fff", fontSize: 14, border: "1px solid var(--pelouse2)", cursor: "pointer" }}>
+                🔔 Activer les rappels (10h & 22h)
+              </button>
+              {installPrompt && (
+                <button onClick={() => { installPrompt.prompt(); setInstallPrompt(null); }}
+                  className="rounded-lg px-4 py-3 font-semibold w-full mt-2"
+                  style={{ background: "var(--ticket)", color: "var(--encre)", fontSize: 14, border: "1px solid var(--ligne)", cursor: "pointer" }}>
+                  📲 Ajouter l'app à l'écran d'accueil
+                </button>
+              )}
+            </>
+          )}
+          {rappelsMsg && <p className="mono mt-2" style={{ fontSize: 10, color: "var(--perdu)" }}>{rappelsMsg}</p>}
+          <button onClick={passerRappels} className="mono mt-5"
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: 10, textDecoration: "underline" }}>
+            Plus tard — et tant pis si j'oublie mon carnet…
+          </button>
         </div>
       </div>
     );
