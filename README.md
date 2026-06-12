@@ -40,6 +40,9 @@ alter table public.preuves enable row level security;
 
 create policy "lecture joueurs" on public.joueurs
   for select to authenticated using (true);
+-- Lecture anonyme pour les cartes de stats partagées (/u/<id>)
+create policy "lecture publique joueurs" on public.joueurs
+  for select to anon using (true);
 create policy "creer son joueur" on public.joueurs
   for insert to authenticated with check (id = auth.uid());
 create policy "modifier son joueur" on public.joueurs

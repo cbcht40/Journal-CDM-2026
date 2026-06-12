@@ -6,7 +6,9 @@ import {
   chargerMoi, sauverMoi, viderMesDonnees, listerJoueurs,
   sauverPreuve, lirePreuve, supprimerPreuve,
 } from "../lib/supabase";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import QRCode from "qrcode";
+import { dessinerCarte } from "../lib/carte";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, BarChart, Bar, Cell, PieChart, Pie,
@@ -411,6 +413,12 @@ export default function CarnetParis() {
   const [errPreuve, setErrPreuve] = useState(null);
   const [preuveVue, setPreuveVue] = useState(null); // { titre, image|null, erreur? }
   const [joueurVu, setJoueurVu] = useState(null); // cle du joueur consulté
+  const [partageOuvert, setPartageOuvert] = useState(false);
+  const [partageOpts, setPartageOpts] = useState({ n: true, m: true, p: true, c: true, s: true });
+  const [lienPartage, setLienPartage] = useState(null);
+  const [qrPartage, setQrPartage] = useState(null);
+  const [lienCopie, setLienCopie] = useState(false);
+  const apercuRef = useRef(null);
 
   // Au retour d'un joueur déjà inscrit, on présente « Se connecter » plutôt
   // que « Créer mon compte » (évite les doublons de compte par mégarde).
@@ -866,6 +874,66 @@ export default function CarnetParis() {
 
   const joueurOuvert = joueurVu ? joueurs.find((j) => j.cle === joueurVu) : null;
 
+  // ----- Partage de la carte de stats -----
+  const partageData = useMemo(() => ({
+    pseudo: profil?.pseudo,
+    bankroll: stats.actuelle, depart, investi: stats.investi,
+    pnl: stats.pnlTotal, pnlPct: stats.pctVsDepart, roi: stats.roi,
+    reussite: stats.reussite, regles: stats.regles, enCours: stats.enCours,
+    last5: stats.last5, courbe: stats.courbePct,
+  }), [profil, stats, depart]);
+
+  useEffect(() => {
+    if (partageOuvert && apercuRef.current) {
+      dessinerCarte(apercuRef.current, partageData, partageOpts);
+    }
+  }, [partageOuvert, partageData, partageOpts]);
+
+  const lienCarte = () => {
+    if (typeof window === "undefined" || !profil) return "";
+    const q = Object.entries(partageOpts).filter(([, v]) => !v).map(([k]) => k + "=0").join("&");
+    return window.location.origin + "/u/" + profil.cle + (q ? "?" + q : "");
+  };
+
+  const partagerImage = async () => {
+    const canvas = apercuRef.current;
+    if (!canvas) return;
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const fichier = new File([blob], "stats-cdm.png", { type: "image/png" });
+      const lien = lienCarte();
+      try {
+        if (navigator.canShare && navigator.canShare({ files: [fichier] })) {
+          await navigator.share({
+            files: [fichier], title: "Mes stats — Journal CDM 2026",
+            text: "Mon carnet de paris CDM 2026 ⚽ " + lien,
+          });
+          return;
+        }
+      } catch (e) { if (e?.name === "AbortError") return; }
+      // Repli : téléchargement
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "stats-cdm.png";
+      a.click();
+    }, "image/png");
+  };
+
+  const genererLienQR = async () => {
+    const lien = lienCarte();
+    setLienPartage(lien);
+    setLienCopie(false);
+    try { setQrPartage(await QRCode.toDataURL(lien, { width: 320, margin: 2, color: { dark: "#15241C", light: "#FFFFFF" } })); }
+    catch (e) { setQrPartage(null); }
+  };
+
+  const copierLien = async () => {
+    try { await navigator.clipboard.writeText(lienPartage); setLienCopie(true); setTimeout(() => setLienCopie(false), 2000); }
+    catch (e) {}
+  };
+
+  const basculerOpt = (k) => { setPartageOpts((o) => ({ ...o, [k]: !o[k] })); setLienPartage(null); setQrPartage(null); };
+
   const tournoisFini = aujourdhui() > "2026-07-19";
   const joursRestants = Math.max(0, Math.ceil((new Date("2026-07-19T23:59:00") - new Date()) / 86400000));
   const podium = [...joueurs].sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
@@ -1296,6 +1364,15 @@ export default function CarnetParis() {
               border: "1px solid rgba(255,255,255,.4)",
             }}>
             Déconnexion
+          </button>
+          <button onClick={() => { setPartageOuvert(true); setLienPartage(null); setQrPartage(null); }}
+            className="mono uppercase rounded-lg px-3 py-1.5"
+            style={{
+              fontSize: 10, letterSpacing: 1, cursor: "pointer",
+              background: "#fff", color: "var(--pelouse)",
+              border: "1px solid rgba(255,255,255,.4)", fontWeight: 700,
+            }}>
+            📤 Partager
           </button>
           <button onClick={() => setReglesVues(false)} className="mono uppercase rounded-lg px-3 py-1.5"
             style={{
@@ -1932,6 +2009,68 @@ export default function CarnetParis() {
                   </div>
                 );
               })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Partage de la carte de stats */}
+      {partageOuvert && (
+        <div className="voile" style={{ zIndex: 60 }} onClick={() => setPartageOuvert(false)}>
+          <div className="panel p-4" style={{ maxWidth: 460, width: "100%", maxHeight: "90vh", overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="disp uppercase flex-1" style={{ fontSize: 16 }}>Partager mes stats</span>
+              <button onClick={() => setPartageOuvert(false)} aria-label="Fermer"
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--dim)", lineHeight: 1 }}>
+                ✕
+              </button>
+            </div>
+
+            <div className="mono uppercase mb-2" style={{ fontSize: 9, letterSpacing: 1.5, color: "var(--dim)" }}>
+              Affiché sur la carte — clique pour masquer
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {[["n", "Mon pseudo"], ["p", "% de rendement"], ["m", "Montants €"], ["c", "Courbe"], ["s", "Stats détaillées"]].map(([k, label]) => (
+                <button key={k} onClick={() => basculerOpt(k)}
+                  className="mono rounded-full px-3 py-1.5"
+                  style={{
+                    fontSize: 11, cursor: "pointer", border: "1px solid var(--ligne)",
+                    background: partageOpts[k] ? "var(--pelouse)" : "var(--ticket)",
+                    color: partageOpts[k] ? "#fff" : "var(--dim)",
+                  }}>
+                  {partageOpts[k] ? "✓ " : ""}{label}
+                </button>
+              ))}
+            </div>
+
+            <canvas ref={apercuRef} style={{ width: "100%", borderRadius: 12, display: "block" }} />
+
+            <div className="flex flex-col gap-2 mt-3">
+              <button onClick={partagerImage}
+                className="rounded-lg px-4 py-3 font-semibold"
+                style={{ background: "var(--pelouse)", color: "#fff", fontSize: 14, border: "1px solid var(--pelouse2)", cursor: "pointer" }}>
+                📤 Partager l'image
+              </button>
+              <button onClick={genererLienQR}
+                className="rounded-lg px-4 py-2.5 font-semibold"
+                style={{ background: "var(--ticket)", color: "var(--encre)", fontSize: 14, border: "1px solid var(--ligne)", cursor: "pointer" }}>
+                🔗 Générer le lien & le QR
+              </button>
+            </div>
+
+            {lienPartage && (
+              <div className="mt-3 flex flex-col items-center gap-2 panel p-3">
+                {qrPartage && <img src={qrPartage} alt="QR code de la carte" style={{ width: 180, height: 180 }} />}
+                <div className="mono break-all text-center" style={{ fontSize: 10, color: "var(--dim)" }}>{lienPartage}</div>
+                <button onClick={copierLien} className="mono rounded-lg px-3 py-1.5"
+                  style={{ fontSize: 11, cursor: "pointer", border: "1px solid var(--ligne)", background: lienCopie ? "var(--pelouse)" : "var(--ticket)", color: lienCopie ? "#fff" : "var(--encre)" }}>
+                  {lienCopie ? "✓ Copié !" : "📋 Copier le lien"}
+                </button>
+                <div className="mono text-center" style={{ fontSize: 9, color: "var(--dim)" }}>
+                  Toute personne avec ce lien voit ces stats, même sans compte.
+                </div>
+              </div>
             )}
           </div>
         </div>
