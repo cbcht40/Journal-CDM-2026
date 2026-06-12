@@ -44,7 +44,10 @@ const pnlDe = (b) => {
   return null;
 };
 
-function calcStats(paris, depart) {
+function calcStats(paris, depart, recharges = []) {
+  // Total investi = bankroll de départ + toutes les recharges (chacune prouvée)
+  const totalRecharges = recharges.reduce((s, r) => s + Number(r.montant), 0);
+  const investi = Math.round((depart + totalRecharges) * 100) / 100;
   const regles = paris.filter((b) => b.resultat !== "En cours");
   const chrono = [...regles].sort((a, b) =>
     a.date === b.date ? a.ts - b.ts : a.date.localeCompare(b.date)
@@ -55,22 +58,32 @@ function calcStats(paris, depart) {
   const p = chrono.filter((b) => b.resultat === "Perdu").length;
   const r = chrono.filter((b) => b.resultat === "Remboursé").length;
 
+  // Courbe de bankroll : tickets réglés + recharges, en ordre chronologique
+  const evenements = [
+    ...chrono.map((b) => ({ date: b.date, ts: b.ts || 0, b })),
+    ...recharges.map((re) => ({ date: re.date, ts: re.ts || 0, re })),
+  ].sort((a, b) => (a.date === b.date ? a.ts - b.ts : a.date.localeCompare(b.date)));
   let bank = depart;
   const courbeBankroll = [{ name: "Départ", bankroll: depart }];
   const cumParJour = {}, totalParJour = {};
   let cum = 0;
-  chrono.forEach((b) => {
-    const v = pnlDe(b);
+  evenements.forEach((e) => {
+    if (e.re) {
+      bank = Math.round((bank + Number(e.re.montant)) * 100) / 100;
+      courbeBankroll.push({ name: jjmm(e.date), bankroll: bank, match: "💶 Recharge (hors P&L)", p: Number(e.re.montant) });
+      return;
+    }
+    const v = pnlDe(e.b);
     cum = Math.round((cum + v) * 100) / 100;
     bank = Math.round((bank + v) * 100) / 100;
-    courbeBankroll.push({ name: jjmm(b.date), bankroll: bank, match: b.match, p: v });
-    cumParJour[b.date] = cum;
-    totalParJour[b.date] = Math.round(((totalParJour[b.date] || 0) + v) * 100) / 100;
+    courbeBankroll.push({ name: jjmm(e.date), bankroll: bank, match: e.b.match, p: v });
+    cumParJour[e.date] = cum;
+    totalParJour[e.date] = Math.round(((totalParJour[e.date] || 0) + v) * 100) / 100;
   });
   const jours = Object.keys(totalParJour).sort();
   const parJour = jours.map((d) => ({ d: jjmm(d), total: totalParJour[d] }));
   const courbePct = jours.map((d) => ({
-    d, pct: depart > 0 ? Math.round((cumParJour[d] / depart) * 1000) / 10 : 0,
+    d, pct: investi > 0 ? Math.round((cumParJour[d] / investi) * 1000) / 10 : 0,
   }));
 
   const gp = chrono.filter((b) => b.resultat === "Gagné" || b.resultat === "Perdu");
@@ -95,11 +108,11 @@ function calcStats(paris, depart) {
   });
 
   return {
-    pnlTotal, miseTotale, g, p, r,
+    pnlTotal, miseTotale, g, p, r, investi,
     reussite: g + p > 0 ? g / (g + p) : null,
     roi: miseTotale > 0 ? pnlTotal / miseTotale : null,
-    pctVsDepart: depart > 0 ? Math.round((pnlTotal / depart) * 1000) / 10 : 0,
-    actuelle: Math.round((depart + pnlTotal) * 100) / 100,
+    pctVsDepart: investi > 0 ? Math.round((pnlTotal / investi) * 1000) / 10 : 0,
+    actuelle: Math.round((investi + pnlTotal) * 100) / 100,
     enCours: paris.length - regles.length,
     regles: regles.length,
     last5: chrono.slice(-5).map((b) => b.resultat[0]),
@@ -366,6 +379,11 @@ export default function CarnetParis() {
   const [envoiBank, setEnvoiBank] = useState(false);
   const [errBank, setErrBank] = useState(null);
   const [depart, setDepart] = useState(200);
+  const [recharges, setRecharges] = useState([]); // [{ id, ts, date, montant }]
+  const [rechargeOuvert, setRechargeOuvert] = useState(false);
+  const [rechargeMontant, setRechargeMontant] = useState("");
+  const [envoiRecharge, setEnvoiRecharge] = useState(false);
+  const [errRecharge, setErrRecharge] = useState(null);
   const [paris, setParis] = useState([]);
   const [form, setForm] = useState({ date: aujourdhui(), match: "", cote: "", mise: "" });
   const [confirmSuppr, setConfirmSuppr] = useState(null);
@@ -418,6 +436,7 @@ export default function CarnetParis() {
     if (!supabase) return;
     if (!utilisateur) {
       setChargement(false); setProfil(null); setParis([]); setDepart(200);
+      setRecharges([]); setRechargeOuvert(false);
       setReglesVues(false); setDepartVerifie(false); setClassement([]);
       setErreurChargement(false);
       return;
@@ -437,6 +456,7 @@ export default function CarnetParis() {
         const d = moi.donnees || {};
         if (typeof d.depart === "number") setDepart(d.depart);
         setParis(Array.isArray(d.paris) ? d.paris : []);
+        setRecharges(Array.isArray(d.recharges) ? d.recharges : []);
         setReglesVues(!!d.reglesVues);
         setDepartVerifie(!!d.departVerifie);
       } else {
@@ -451,18 +471,20 @@ export default function CarnetParis() {
   useEffect(() => {
     if (chargement || sansStockage || !utilisateur || !profil) return;
     const t = setTimeout(() => {
-      const s = calcStats(paris, depart);
+      const s = calcStats(paris, depart, recharges);
       const entree = {
         pseudo: profil.pseudo, depart, departVerifie, bankroll: s.actuelle, pnl: s.pnlTotal,
         pnlPct: s.pctVsDepart, roi: s.roi, regles: s.regles, enCours: s.enCours,
+        investi: s.investi,
+        recharges: recharges.map(({ id, ts, date, montant }) => ({ id, ts, date, montant })),
         reussite: s.reussite, last5: s.last5, courbe: s.courbePct, maj: Date.now(),
         paris: paris.map(({ id, ts, date, match, cote, mise, resultat, preuve }) =>
           ({ id, ts, date, match, cote, mise, resultat, preuve: !!preuve })),
       };
-      sauverMoi(profil.pseudo, { depart, paris, reglesVues, departVerifie }, entree).catch(() => {});
+      sauverMoi(profil.pseudo, { depart, paris, reglesVues, departVerifie, recharges }, entree).catch(() => {});
     }, 500);
     return () => clearTimeout(t);
-  }, [depart, paris, profil, reglesVues, departVerifie, chargement, sansStockage, utilisateur]);
+  }, [depart, paris, recharges, profil, reglesVues, departVerifie, chargement, sansStockage, utilisateur]);
 
   useEffect(() => {
     if (confirmSuppr == null) return;
@@ -493,7 +515,7 @@ export default function CarnetParis() {
   useEffect(() => { if (!chargement && profil) chargerClassement(); }, [chargement, profil]);
   useEffect(() => { if (onglet === "classement" || onglet === "finale") chargerClassement(); }, [onglet]);
 
-  const stats = useMemo(() => calcStats(paris, depart), [paris, depart]);
+  const stats = useMemo(() => calcStats(paris, depart, recharges), [paris, depart, recharges]);
 
   const joueurs = useMemo(() => {
     const mesParisPartages = paris.map(({ id, ts, date, match, cote, mise, resultat, preuve }) =>
@@ -501,6 +523,8 @@ export default function CarnetParis() {
     const moi = profil ? {
       pseudo: profil.pseudo, cle: profil.cle, depart, departVerifie, bankroll: stats.actuelle,
       pnl: stats.pnlTotal, pnlPct: stats.pctVsDepart, reussite: stats.reussite,
+      investi: stats.investi,
+      recharges: recharges.map(({ id, ts, date, montant }) => ({ id, ts, date, montant })),
       last5: stats.last5, courbe: stats.courbePct, regles: stats.regles, paris: mesParisPartages,
     } : null;
     const base = classement.map((e) => (moi && e.cle === moi.cle ? { ...e, ...moi } : e));
@@ -509,7 +533,7 @@ export default function CarnetParis() {
       base.sort((a, b) => a.cle.localeCompare(b.cle));
     }
     return base.map((e, i) => ({ ...e, color: PALETTE[i % PALETTE.length] }));
-  }, [classement, profil, stats, depart, paris]);
+  }, [classement, profil, stats, depart, paris, recharges]);
 
   const course = useMemo(() => {
     const dates = [...new Set(joueurs.flatMap((e) => (e.courbe || []).map((p) => p.d)))].sort();
@@ -597,6 +621,30 @@ export default function CarnetParis() {
     setEnvoiBank(false);
   };
 
+  const validerRecharge = async (file) => {
+    const montant = Number(String(rechargeMontant).trim().replace(",", "."));
+    if (!Number.isFinite(montant) || montant <= 0) { setErrRecharge("Montant invalide."); return; }
+    setEnvoiRecharge(true); setErrRecharge(null);
+    let image;
+    try { image = await compresserAdaptatif(file); }
+    catch (err) {
+      setErrRecharge(messagePreuveErreur(err, file));
+      setEnvoiRecharge(false); return;
+    }
+    const rech = {
+      id: "rech-" + Date.now(), ts: Date.now(), date: aujourdhui(),
+      montant: Math.round(montant * 100) / 100,
+    };
+    try {
+      await sauverPreuve(rech.id, image);
+      setRecharges((prev) => [...prev, rech]);
+      setRechargeMontant(""); setRechargeOuvert(false);
+    } catch (e) {
+      setErrRecharge("Échec de l'envoi côté stockage : " + (e?.message || "erreur inconnue") + ". Réessaie dans quelques secondes.");
+    }
+    setEnvoiRecharge(false);
+  };
+
   const voirPreuve = async (cleJoueur, b) => {
     setPreuveVue({ titre: `${b.match} — ${b.resultat}`, image: null });
     try {
@@ -642,6 +690,7 @@ export default function CarnetParis() {
       const d = existant.donnees || {};
       if (typeof d.depart === "number") setDepart(d.depart);
       setParis(Array.isArray(d.paris) ? d.paris : []);
+      setRecharges(Array.isArray(d.recharges) ? d.recharges : []);
       setReglesVues(!!d.reglesVues);
       setDepartVerifie(!!d.departVerifie);
       return;
@@ -675,6 +724,7 @@ export default function CarnetParis() {
     if (!confirmReset) { setConfirmReset(true); setTimeout(() => setConfirmReset(false), 3000); return; }
     try { await viderMesDonnees(); } catch (e) {}
     setParis([]); setDepart(200); setProfil(null); setPseudoInput(""); setReglesVues(false);
+    setRecharges([]); setRechargeOuvert(false); setRechargeMontant(""); setErrRecharge(null);
     setDepartVerifie(false); setModifBank(false); setDepartInput(""); setErrBank(null);
     setClassement([]); setConfirmReset(false); setOnglet("carnet"); setJoueurVu(null);
   };
@@ -1051,9 +1101,52 @@ export default function CarnetParis() {
                     {errBank && <span style={{ color: "var(--perdu)" }}>{errBank}</span>}
                   </div>
                 )}
+                {recharges.length > 0 && (
+                  <div className="mono mt-1 flex flex-col gap-0.5" style={{ fontSize: 10, color: "var(--dim)" }}>
+                    {recharges.map((r) => (
+                      <span key={r.id}>
+                        recharge {eurSigne(r.montant)} · {jjmm(r.date)} ·{" "}
+                        <button onClick={() => voirPreuve(profil.cle, { id: r.id, match: "Recharge du " + jjmm(r.date), resultat: eurSigne(r.montant) })}
+                          className="mono"
+                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" }}>
+                          📷 preuve
+                        </button>
+                      </span>
+                    ))}
+                    <span>total investi {eur(stats.investi)}</span>
+                  </div>
+                )}
+                <div className="mono mt-2" style={{ fontSize: 10 }}>
+                  {rechargeOuvert ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input type="text" inputMode="decimal" value={rechargeMontant} aria-label="Montant remis en euros"
+                        placeholder="Montant €" autoFocus
+                        onChange={(e) => setRechargeMontant(e.target.value)}
+                        className="champ mono champ-mini" />
+                      <label className="rounded-lg px-2 py-1 font-semibold"
+                        style={{ background: "var(--pelouse)", color: "#fff", fontSize: 10, cursor: envoiRecharge ? "wait" : "pointer" }}>
+                        {envoiRecharge ? "Envoi…" : "📷 Preuve du dépôt"}
+                        <input type="file" accept="image/*" style={{ display: "none" }} disabled={envoiRecharge}
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) validerRecharge(f); e.target.value = ""; }} />
+                      </label>
+                      <button onClick={() => { setRechargeOuvert(false); setErrRecharge(null); }} disabled={envoiRecharge}
+                        className="mono"
+                        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: "inherit", textDecoration: "underline" }}>
+                        annuler
+                      </button>
+                      {errRecharge && <span style={{ color: "var(--perdu)" }}>{errRecharge}</span>}
+                    </div>
+                  ) : (
+                    <button onClick={() => { setRechargeOuvert(true); setErrRecharge(null); }}
+                      className="mono"
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--or)", fontSize: "inherit", textDecoration: "underline" }}>
+                      💶 Remettre des sous (screenshot exigé)
+                    </button>
+                  )}
+                </div>
               </div>
               <Kpi label="P&L total" value={eurSigne(stats.pnlTotal)}
-                sub={pourcent(stats.pctVsDepart) + " du départ"}
+                sub={pourcent(stats.pctVsDepart) + (recharges.length ? " de l'investi" : " du départ")}
                 color={stats.pnlTotal > 0 ? "var(--gagne)" : stats.pnlTotal < 0 ? "var(--perdu)" : undefined} />
               <Kpi label="ROI" value={stats.roi == null ? "—" : pct(stats.roi)}
                 color={stats.roi > 0 ? "var(--gagne)" : stats.roi < 0 ? "var(--perdu)" : undefined} />
@@ -1361,7 +1454,7 @@ export default function CarnetParis() {
             <div className="grid md:grid-cols-2 gap-4 pb-6">
               {[
                 { titre: "Classement · % de P&L", tri: (a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0), valeur: (j) => pourcent(j.pnlPct ?? 0), couleur: (j) => (j.pnlPct > 0 ? "var(--gagne)" : j.pnlPct < 0 ? "var(--perdu)" : "var(--encre)"), sous: (j) => eurSigne(j.pnl ?? 0) },
-                { titre: "Classement · Bankroll", tri: (a, b) => (b.bankroll ?? 0) - (a.bankroll ?? 0), valeur: (j) => eur(j.bankroll ?? 0), couleur: () => "var(--or)", sous: (j) => "départ " + eur(j.depart ?? 0) + (j.departVerifie ? " ✓" : " (non vérifié)") },
+                { titre: "Classement · Bankroll", tri: (a, b) => (b.bankroll ?? 0) - (a.bankroll ?? 0), valeur: (j) => eur(j.bankroll ?? 0), couleur: () => "var(--or)", sous: (j) => "investi " + eur(j.investi ?? j.depart ?? 0) + (j.departVerifie ? " ✓" : " (non vérifié)") + (j.recharges?.length ? ` · ${j.recharges.length} recharge${j.recharges.length > 1 ? "s" : ""}` : "") },
               ].map((c) => (
                 <div key={c.titre} className="panel overflow-hidden">
                   <div className="px-4 pt-4"><Titre>{c.titre}</Titre></div>
@@ -1502,6 +1595,21 @@ export default function CarnetParis() {
               <span>P&L <b style={{ color: (joueurOuvert.pnl ?? 0) >= 0 ? "var(--gagne)" : "var(--perdu)" }}>{pourcent(joueurOuvert.pnlPct ?? 0)}</b></span>
               <span>Réussite <b>{joueurOuvert.reussite == null ? "—" : pct(joueurOuvert.reussite)}</b></span>
             </div>
+            {(joueurOuvert.recharges?.length > 0) && (
+              <div className="mono px-4 py-2 flex flex-wrap gap-x-4 gap-y-1" style={{ fontSize: 10, color: "var(--dim)", borderBottom: "1px solid var(--ligne)" }}>
+                <span>Investi <b>{eur(joueurOuvert.investi ?? joueurOuvert.depart ?? 0)}</b></span>
+                {joueurOuvert.recharges.map((r) => (
+                  <span key={r.id}>
+                    recharge {eurSigne(r.montant)} le {jjmm(r.date)}{" "}
+                    <button onClick={() => voirPreuve(joueurOuvert.cle, { id: r.id, match: "Recharge de @" + joueurOuvert.pseudo + " le " + jjmm(r.date), resultat: eurSigne(r.montant) })}
+                      className="mono"
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" }}>
+                      📷
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             {!(joueurOuvert.paris?.length) ? (
               <div className="px-4 py-6 text-center mono" style={{ fontSize: 11, color: "var(--dim)" }}>
                 {joueurOuvert.paris ? "Aucun ticket pour l'instant." : "Carnet non partagé — il doit rouvrir son app pour publier ses tickets."}
