@@ -671,10 +671,13 @@ export default function CarnetParis() {
     setEnvoiPreuve(false);
   };
 
-  // Screenshot du ticket placé (preuve « ticket avant le match »), dispo même En cours
-  const envoyerPreuveTicket = async (b, file) => {
+  // Ajout/remplacement d'un screenshot : type "ticket" (avant match) ou "resultat" (validation)
+  const envoyerScreen = async (b, type, file) => {
     if (!profil) return;
-    setEnvoiTicket(b.id); setErrTicket(null);
+    const busy = b.id + (type === "ticket" ? ":tic" : ":res");
+    const ref = type === "ticket" ? b.id + ":ticket" : b.id;
+    const champ = type === "ticket" ? "preuveTicket" : "preuve";
+    setEnvoiTicket(busy); setErrTicket(null);
     let image;
     try { image = await compresserAdaptatif(file); }
     catch (err) {
@@ -682,8 +685,8 @@ export default function CarnetParis() {
       setEnvoiTicket(null); return;
     }
     try {
-      await sauverPreuve(b.id + ":ticket", image);
-      setParis((prev) => prev.map((x) => (x.id === b.id ? { ...x, preuveTicket: true } : x)));
+      await sauverPreuve(ref, image);
+      setParis((prev) => prev.map((x) => (x.id === b.id ? { ...x, [champ]: true } : x)));
     } catch (e) {
       setErrTicket("Échec de l'envoi côté stockage : " + (e?.message || "erreur inconnue") + ". Réessaie.");
     }
@@ -886,6 +889,25 @@ export default function CarnetParis() {
 
   const stampClasse = (r) =>
     r === "Gagné" ? "st-g" : r === "Perdu" ? "st-p" : r === "Remboursé" ? "st-r" : "st-att";
+
+  // Contrôle screenshot dans un ticket : voir + modifier si présent, sinon ajouter
+  const lienVert = { background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" };
+  const lienGris = (busy) => ({ cursor: busy ? "wait" : "pointer", color: "var(--dim)", textDecoration: "underline dotted", textUnderlineOffset: 2, fontSize: "inherit" });
+  const ctrlScreen = (busyKey, present, viewLabel, addLabel, onView, type, b) => {
+    const busy = envoiTicket === busyKey;
+    const champFile = (
+      <input type="file" accept="image/*" style={{ display: "none" }} disabled={busy}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) envoyerScreen(b, type, f); e.target.value = ""; }} />
+    );
+    return present ? (
+      <>
+        <button onClick={onView} className="mono" style={lienVert}>{viewLabel}</button>
+        <label className="mono" style={lienGris(busy)}>{busy ? "envoi…" : "modifier"}{champFile}</label>
+      </>
+    ) : (
+      <label className="mono" style={lienGris(busy)}>{busy ? "envoi…" : addLabel}{champFile}</label>
+    );
+  };
 
   const tries = [...paris].sort((a, b) =>
     a.date === b.date ? b.ts - a.ts : b.date.localeCompare(a.date)
@@ -1722,24 +1744,15 @@ export default function CarnetParis() {
                           </button>
                         )}
                         <span>· mise {eur(b.mise)}</span>
-                        {b.preuve && (
-                          <button onClick={() => voirPreuve(profil.cle, b)} className="mono"
-                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" }}>
-                            📷 preuve
-                          </button>
+                        {ctrlScreen(
+                          b.id + ":tic", b.preuveTicket, "🎫 ticket", "📎 ticket avant match",
+                          () => voirPreuve(profil.cle, { id: b.id + ":ticket", match: b.match, resultat: "Ticket avant match" }),
+                          "ticket", b
                         )}
-                        {b.preuveTicket ? (
-                          <button onClick={() => voirPreuve(profil.cle, { id: b.id + ":ticket", match: b.match, resultat: "Ticket placé" })}
-                            className="mono"
-                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--pelouse)", fontSize: "inherit", textDecoration: "underline" }}>
-                            🎫 ticket
-                          </button>
-                        ) : (
-                          <label className="mono" style={{ cursor: envoiTicket === b.id ? "wait" : "pointer", color: "var(--dim)", textDecoration: "underline dotted", textUnderlineOffset: 2 }}>
-                            {envoiTicket === b.id ? "envoi…" : "📎 joindre le ticket"}
-                            <input type="file" accept="image/*" style={{ display: "none" }} disabled={envoiTicket === b.id}
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) envoyerPreuveTicket(b, f); e.target.value = ""; }} />
-                          </label>
+                        {(b.resultat === "Gagné" || b.resultat === "Perdu") && ctrlScreen(
+                          b.id + ":res", b.preuve, "📷 preuve", "📷 preuve du résultat",
+                          () => voirPreuve(profil.cle, b),
+                          "resultat", b
                         )}
                       </div>
                       {errTicket && envoiTicket === null && (
