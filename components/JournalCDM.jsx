@@ -35,6 +35,8 @@ const jjmm = (iso) => {
   return p.length === 3 ? `${p[2]}/${p[1]}` : iso;
 };
 const aujourdhui = () => new Date().toLocaleDateString("fr-CA");
+// Nombre saisi à la française : accepte la virgule comme séparateur décimal
+const num = (v) => Number(String(v).trim().replace(",", "."));
 
 const pnlDe = (b) => {
   const c = Number(b.cote), m = Number(b.mise);
@@ -546,7 +548,7 @@ export default function CarnetParis() {
     return data;
   }, [joueurs]);
 
-  const formValide = form.match.trim() && Number(form.cote) > 1 && Number(form.mise) > 0;
+  const formValide = form.match.trim() && num(form.cote) > 1 && num(form.mise) > 0;
 
   const ajouter = () => {
     if (!formValide) return;
@@ -555,8 +557,8 @@ export default function CarnetParis() {
       ts: Date.now(),
       date: form.date || aujourdhui(),
       match: form.match.trim(),
-      cote: Number(form.cote),
-      mise: Number(form.mise),
+      cote: Math.round(num(form.cote) * 100) / 100,
+      mise: Math.round(num(form.mise) * 100) / 100,
       resultat: "En cours",
       preuve: false,
     }]);
@@ -1270,10 +1272,10 @@ export default function CarnetParis() {
                 <input type="text" placeholder="Match (ex. France – Brésil)" value={form.match} aria-label="Match"
                   onChange={(e) => setForm({ ...form, match: e.target.value })}
                   className="champ ch-match" />
-                <input type="number" placeholder="Cote" step="0.01" min="1.01" value={form.cote} aria-label="Cote"
+                <input type="text" inputMode="decimal" placeholder="Cote" value={form.cote} aria-label="Cote"
                   onChange={(e) => setForm({ ...form, cote: e.target.value })}
                   className="champ mono ch-cote" />
-                <input type="number" placeholder="Mise €" step="0.5" min="0.5" value={form.mise} aria-label="Mise en euros"
+                <input type="text" inputMode="decimal" placeholder="Mise €" value={form.mise} aria-label="Mise en euros"
                   onChange={(e) => setForm({ ...form, mise: e.target.value })}
                   className="champ mono ch-mise" />
                 <button onClick={ajouter} disabled={!formValide}
@@ -1286,9 +1288,9 @@ export default function CarnetParis() {
                   Valider le ticket
                 </button>
               </div>
-              {Number(form.cote) > 1 && Number(form.mise) > 0 && (
+              {num(form.cote) > 1 && num(form.mise) > 0 && (
                 <div className="mono mt-2" style={{ fontSize: 11, color: "var(--dim)" }}>
-                  Gain potentiel : {eurSigne(Math.round(Number(form.mise) * (Number(form.cote) - 1) * 100) / 100)}
+                  Gain potentiel : {eurSigne(Math.round(num(form.mise) * (num(form.cote) - 1) * 100) / 100)}
                 </div>
               )}
             </div>
