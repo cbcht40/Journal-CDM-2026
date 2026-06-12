@@ -1333,9 +1333,9 @@ export default function CarnetParis() {
       <div className="max-w-4xl mx-auto px-4 py-6 flex flex-col gap-4">
 
         {/* En-tête */}
-        <div className="rounded-2xl px-5 py-4 flex flex-wrap items-center gap-3"
+        <div className="rounded-2xl px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3"
           style={{ background: "var(--pelouse)", border: "2px solid rgba(255,255,255,.45)" }}>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 sm:flex-1">
             <h1 className="disp uppercase titre-app" style={{ color: "#fff" }}>
               Journal CDM 2026
             </h1>
@@ -1344,6 +1344,7 @@ export default function CarnetParis() {
               {stats.enCours > 0 ? ` · ${stats.enCours} en cours` : ""}
             </div>
           </div>
+          <div className="flex flex-wrap gap-2">
           {(rappels === "dispo" || rappels === "actifs") && (
             <button onClick={rappels === "dispo" ? activerRappels : undefined}
               className="mono uppercase rounded-lg px-3 py-1.5"
@@ -1391,6 +1392,7 @@ export default function CarnetParis() {
             }}>
             {confirmReset ? "Confirmer ?" : "Tout effacer"}
           </button>
+          </div>
         </div>
 
         {/* Onglets */}
