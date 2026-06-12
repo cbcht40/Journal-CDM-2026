@@ -1269,7 +1269,7 @@ export default function CarnetParis() {
                 <input type="date" value={form.date} aria-label="Date"
                   onChange={(e) => setForm({ ...form, date: e.target.value })}
                   className="champ mono ch-date" />
-                <input type="text" placeholder="Match (ex. France – Brésil)" value={form.match} aria-label="Match"
+                <input type="text" placeholder="Pari (ex. France – Brésil, ou combiné 3 matchs)" value={form.match} aria-label="Pari (match simple ou combiné)"
                   onChange={(e) => setForm({ ...form, match: e.target.value })}
                   className="champ ch-match" />
                 <input type="text" inputMode="decimal" placeholder="Cote" value={form.cote} aria-label="Cote"
