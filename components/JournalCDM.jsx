@@ -797,10 +797,11 @@ export default function CarnetParis() {
   };
 
   const validerNouveauMdp = async () => {
-    if (nouveauMdp.length < 6) { setErrRecup("Mot de passe : 6 caractères minimum."); return; }
+    const mdp = nouveauMdp.trim();
+    if (mdp.length < 6) { setErrRecup("Mot de passe : 6 caractères minimum."); return; }
     setRecupEnCours(true); setErrRecup(null);
     try {
-      await changerMotDePasse(nouveauMdp);
+      await changerMotDePasse(mdp);
       setRecuperation(false); setNouveauMdp("");
     } catch (e) {
       setErrRecup(traduireErreurAuth(e?.message));
@@ -810,17 +811,18 @@ export default function CarnetParis() {
 
   const validerAuth = async () => {
     const email = emailInput.trim();
-    if (!email.includes("@") || mdpInput.length < 6) {
+    const mdp = mdpInput.trim(); // espaces parasites du clavier mobile
+    if (!email.includes("@") || mdp.length < 6) {
       setAuthErreur("Email valide et mot de passe de 6 caractères minimum.");
       return;
     }
     setAuthEnCours(true); setAuthErreur(null); setAuthInfo(null);
     try {
       if (authMode === "creation") {
-        const r = await inscrireEmail(email, mdpInput);
+        const r = await inscrireEmail(email, mdp);
         if (!r?.session) setAuthInfo("Compte créé — confirme ton adresse via l'email reçu, puis connecte-toi.");
       } else {
-        await connecterEmail(email, mdpInput);
+        await connecterEmail(email, mdp);
       }
     } catch (e) {
       setAuthErreur(traduireErreurAuth(e?.message));
@@ -905,11 +907,14 @@ export default function CarnetParis() {
               : "Connecte-toi pour retrouver ton carnet."}
           </p>
           <div className="flex flex-col gap-2 mt-4">
-            <input type="email" autoComplete="email" placeholder="Email" value={emailInput} aria-label="Email"
+            <input type="email" autoComplete="email" inputMode="email"
+              autoCapitalize="none" autoCorrect="off" spellCheck={false}
+              placeholder="Email" value={emailInput} aria-label="Email"
               onChange={(e) => setEmailInput(e.target.value)} className="champ" autoFocus />
             <div className="flex gap-2">
               <input type={mdpVisible ? "text" : "password"}
                 autoComplete={authMode === "creation" ? "new-password" : "current-password"}
+                autoCapitalize="none" autoCorrect="off" spellCheck={false}
                 placeholder="Mot de passe (6 caractères min.)" value={mdpInput} aria-label="Mot de passe"
                 onChange={(e) => setMdpInput(e.target.value)} className="champ flex-1" />
               <button onClick={() => setMdpVisible((v) => !v)} type="button"
@@ -963,6 +968,7 @@ export default function CarnetParis() {
           </p>
           <div className="flex gap-2 mt-4">
             <input type={mdpVisible ? "text" : "password"} autoComplete="new-password"
+              autoCapitalize="none" autoCorrect="off" spellCheck={false}
               placeholder="Nouveau mot de passe (6 min.)" value={nouveauMdp} aria-label="Nouveau mot de passe"
               onChange={(e) => setNouveauMdp(e.target.value)} className="champ flex-1" autoFocus />
             <button onClick={() => setMdpVisible((v) => !v)} type="button"
