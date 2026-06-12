@@ -350,6 +350,7 @@ export default function CarnetParis() {
   const [authMode, setAuthMode] = useState("creation"); // creation | connexion
   const [emailInput, setEmailInput] = useState("");
   const [mdpInput, setMdpInput] = useState("");
+  const [mdpVisible, setMdpVisible] = useState(false);
   const [authErreur, setAuthErreur] = useState(null);
   const [authInfo, setAuthInfo] = useState(null);
   const [authEnCours, setAuthEnCours] = useState(false);
@@ -746,9 +747,18 @@ export default function CarnetParis() {
           <div className="flex flex-col gap-2 mt-4">
             <input type="email" autoComplete="email" placeholder="Email" value={emailInput} aria-label="Email"
               onChange={(e) => setEmailInput(e.target.value)} className="champ" autoFocus />
-            <input type="password" autoComplete={authMode === "creation" ? "new-password" : "current-password"}
-              placeholder="Mot de passe (6 caractères min.)" value={mdpInput} aria-label="Mot de passe"
-              onChange={(e) => setMdpInput(e.target.value)} className="champ" />
+            <div className="flex gap-2">
+              <input type={mdpVisible ? "text" : "password"}
+                autoComplete={authMode === "creation" ? "new-password" : "current-password"}
+                placeholder="Mot de passe (6 caractères min.)" value={mdpInput} aria-label="Mot de passe"
+                onChange={(e) => setMdpInput(e.target.value)} className="champ flex-1" />
+              <button onClick={() => setMdpVisible((v) => !v)} type="button"
+                aria-label={mdpVisible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                title={mdpVisible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                className="champ" style={{ cursor: "pointer", flexShrink: 0 }}>
+                {mdpVisible ? "🙈" : "👁️"}
+              </button>
+            </div>
           </div>
           <button onClick={validerAuth} disabled={authEnCours}
             className="rounded-lg px-4 py-3 font-semibold w-full mt-4"
