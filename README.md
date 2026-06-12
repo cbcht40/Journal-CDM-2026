@@ -71,6 +71,36 @@ environnements) :
 - `NEXT_PUBLIC_SUPABASE_URL` = Project URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = clé anon public
 
+## Mot de passe oublié (une fois)
+
+Dashboard Supabase → **Authentication → URL Configuration** →
+**Site URL** = l'URL du site (ex. `https://journal-cdm-2026.vercel.app`).
+Sans ça, le lien de réinitialisation renvoie vers localhost.
+
+Note : le SMTP par défaut de Supabase est limité (~2 emails/heure) —
+suffisant pour un groupe d'amis.
+
+## Rappels push 10h / 22h (une fois)
+
+Les rappels utilisent Vercel KV (stockage des abonnements) et Vercel
+Cron (`vercel.json`). Configuration :
+
+1. Génère les clés VAPID : `npx web-push generate-vapid-keys`
+2. Ajoute dans Vercel → Settings → Environment Variables :
+   - `NEXT_PUBLIC_VAPID_PUBLIC_KEY` = Public Key générée
+   - `VAPID_PRIVATE_KEY` = Private Key générée
+   - `CRON_SECRET` = une chaîne aléatoire (protège la route d'envoi)
+3. Vercel KV doit être lié au projet (variables `KV_REST_API_URL` et
+   `KV_REST_API_TOKEN` présentes).
+4. Redéploie.
+
+Côté joueurs : bouton **🔔 Rappels** dans l'en-tête. Sur iPhone, il faut
+d'abord installer l'app (Partager → « Sur l'écran d'accueil ») puis
+activer les rappels depuis l'app installée (iOS 16.4 minimum).
+
+Horaires : crons à 8h et 20h UTC = 10h et 22h heure de Paris en été
+(`vercel.json`).
+
 ## Déploiement
 
 ```bash

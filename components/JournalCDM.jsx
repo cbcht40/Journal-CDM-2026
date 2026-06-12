@@ -2,6 +2,7 @@
 
 import {
   supabase, inscrireEmail, connecterEmail, deconnecter,
+  demanderReinitMdp, changerMotDePasse,
   chargerMoi, sauverMoi, viderMesDonnees, listerJoueurs,
   sauverPreuve, lirePreuve, supprimerPreuve,
 } from "../lib/supabase";
@@ -369,6 +370,12 @@ export default function CarnetParis() {
   const [authErreur, setAuthErreur] = useState(null);
   const [authInfo, setAuthInfo] = useState(null);
   const [authEnCours, setAuthEnCours] = useState(false);
+  const [recuperation, setRecuperation] = useState(false); // lien « mot de passe oublié » cliqué
+  const [nouveauMdp, setNouveauMdp] = useState("");
+  const [errRecup, setErrRecup] = useState(null);
+  const [recupEnCours, setRecupEnCours] = useState(false);
+  const [rappels, setRappels] = useState("inconnu"); // inconnu | dispo | actifs | indispo
+  const [rappelsMsg, setRappelsMsg] = useState(null);
   const [erreurChargement, setErreurChargement] = useState(false);
   const [tentative, setTentative] = useState(0);
   const [errPseudo, setErrPseudo] = useState(null);
@@ -430,8 +437,25 @@ export default function CarnetParis() {
       }
       appliquer(data.session);
     });
-    const { data: ecoute } = supabase.auth.onAuthStateChange((_e, session) => appliquer(session));
+    const { data: ecoute } = supabase.auth.onAuthStateChange((evenement, session) => {
+      if (evenement === "PASSWORD_RECOVERY") setRecuperation(true);
+      appliquer(session);
+    });
     return () => { actif = false; ecoute.subscription.unsubscribe(); };
+  }, []);
+
+  // Service worker (PWA + rappels) et état des notifications
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    if (!("PushManager" in window) || !("Notification" in window) || !process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
+      setRappels("indispo");
+      return;
+    }
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((abo) => setRappels(abo ? "actifs" : "dispo"))
+      .catch(() => setRappels("dispo"));
   }, []);
 
   useEffect(() => {
@@ -700,6 +724,66 @@ export default function CarnetParis() {
     setProfil({ pseudo, cle: utilisateur.id });
   };
 
+  const activerRappels = async () => {
+    setRappelsMsg(null);
+    const surIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const installee = window.matchMedia?.("(display-mode: standalone)")?.matches || window.navigator.standalone;
+    if (surIOS && !installee) {
+      setRappelsMsg("Sur iPhone, installe d'abord l'app : bouton Partager → « Sur l'écran d'accueil », puis active les rappels depuis l'app installée.");
+      return;
+    }
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        setRappelsMsg("Notifications refusées — tu peux les réautoriser dans les réglages du navigateur.");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const clePublique = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      const brut = atob(clePublique.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(clePublique.length / 4) * 4, "="));
+      const cle = new Uint8Array([...brut].map((c) => c.charCodeAt(0)));
+      const abo = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cle });
+      const r = await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(abo.toJSON()),
+      });
+      if (!r.ok) throw new Error("enregistrement");
+      setRappels("actifs");
+      setRappelsMsg("Rappels activés : tous les jours à 10h et 22h 🔔");
+    } catch (e) {
+      setRappelsMsg("Activation impossible (" + (e?.message || "erreur") + "). Réessaie.");
+    }
+  };
+
+  const motDePasseOublie = async () => {
+    const email = emailInput.trim();
+    if (!email.includes("@")) {
+      setAuthErreur("Entre d'abord ton email ci-dessus, puis re-clique sur « mot de passe oublié ».");
+      return;
+    }
+    setAuthEnCours(true); setAuthErreur(null); setAuthInfo(null);
+    try {
+      await demanderReinitMdp(email);
+      setAuthInfo("Email envoyé à " + email + " — clique sur le lien reçu pour choisir un nouveau mot de passe (pense aux spams).");
+    } catch (e) {
+      setAuthErreur(traduireErreurAuth(e?.message));
+    }
+    setAuthEnCours(false);
+  };
+
+  const validerNouveauMdp = async () => {
+    if (nouveauMdp.length < 6) { setErrRecup("Mot de passe : 6 caractères minimum."); return; }
+    setRecupEnCours(true); setErrRecup(null);
+    try {
+      await changerMotDePasse(nouveauMdp);
+      setRecuperation(false); setNouveauMdp("");
+    } catch (e) {
+      setErrRecup(traduireErreurAuth(e?.message));
+    }
+    setRecupEnCours(false);
+  };
+
   const validerAuth = async () => {
     const email = emailInput.trim();
     if (!email.includes("@") || mdpInput.length < 6) {
@@ -823,11 +907,56 @@ export default function CarnetParis() {
           </button>
           {authErreur && <p className="mono mt-2" style={{ fontSize: 10, color: "var(--perdu)" }}>{authErreur}</p>}
           {authInfo && <p className="mono mt-2" style={{ fontSize: 10, color: "var(--gagne)" }}>{authInfo}</p>}
-          <button onClick={() => { setAuthMode(authMode === "creation" ? "connexion" : "creation"); setAuthErreur(null); setAuthInfo(null); }}
-            className="mono mt-4"
-            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: 11, textDecoration: "underline" }}>
-            {authMode === "creation" ? "J'ai déjà un compte — me connecter" : "Pas encore de compte — en créer un"}
+          <div className="flex flex-col gap-2 mt-4">
+            <button onClick={() => { setAuthMode(authMode === "creation" ? "connexion" : "creation"); setAuthErreur(null); setAuthInfo(null); }}
+              className="mono text-left"
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: 11, textDecoration: "underline" }}>
+              {authMode === "creation" ? "J'ai déjà un compte — me connecter" : "Pas encore de compte — en créer un"}
+            </button>
+            {authMode === "connexion" && (
+              <button onClick={motDePasseOublie} disabled={authEnCours}
+                className="mono text-left"
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dim)", fontSize: 11, textDecoration: "underline" }}>
+                Mot de passe oublié ?
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- Nouveau mot de passe (après clic sur le lien reçu) ----------
+  if (recuperation && utilisateur) {
+    return (
+      <div className="cdm min-h-screen flex items-center justify-center px-4">
+        <style>{CSS}</style>
+        <div className="panel p-6 w-full" style={{ maxWidth: 430 }}
+          onKeyDown={(e) => { if (e.key === "Enter") validerNouveauMdp(); }}>
+          <div className="disp uppercase" style={{ fontSize: 20 }}>Nouveau mot de passe</div>
+          <p className="mono mt-3" style={{ fontSize: 11, color: "var(--dim)", lineHeight: 1.7 }}>
+            Compte {utilisateur.email} — choisis ton nouveau mot de passe.
+          </p>
+          <div className="flex gap-2 mt-4">
+            <input type={mdpVisible ? "text" : "password"} autoComplete="new-password"
+              placeholder="Nouveau mot de passe (6 min.)" value={nouveauMdp} aria-label="Nouveau mot de passe"
+              onChange={(e) => setNouveauMdp(e.target.value)} className="champ flex-1" autoFocus />
+            <button onClick={() => setMdpVisible((v) => !v)} type="button"
+              aria-label={mdpVisible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+              className="champ" style={{ cursor: "pointer", flexShrink: 0 }}>
+              {mdpVisible ? "🙈" : "👁️"}
+            </button>
+          </div>
+          <button onClick={validerNouveauMdp} disabled={recupEnCours}
+            className="rounded-lg px-4 py-3 font-semibold w-full mt-4"
+            style={{
+              background: "var(--pelouse)", color: "#fff", fontSize: 14,
+              border: "1px solid var(--pelouse2)",
+              cursor: recupEnCours ? "wait" : "pointer", opacity: recupEnCours ? 0.6 : 1,
+            }}>
+            {recupEnCours ? "Un instant…" : "Enregistrer et continuer"}
           </button>
+          {errRecup && <p className="mono mt-2" style={{ fontSize: 10, color: "var(--perdu)" }}>{errRecup}</p>}
         </div>
       </div>
     );
@@ -1020,6 +1149,19 @@ export default function CarnetParis() {
               {stats.enCours > 0 ? ` · ${stats.enCours} en cours` : ""}
             </div>
           </div>
+          {(rappels === "dispo" || rappels === "actifs") && (
+            <button onClick={rappels === "dispo" ? activerRappels : undefined}
+              className="mono uppercase rounded-lg px-3 py-1.5"
+              title={rappels === "actifs" ? "Rappels quotidiens activés (10h et 22h)" : "Recevoir un rappel à 10h et 22h"}
+              style={{
+                fontSize: 10, letterSpacing: 1, cursor: rappels === "dispo" ? "pointer" : "default",
+                background: "rgba(255,255,255,.12)", color: "rgba(255,255,255,.85)",
+                border: "1px solid rgba(255,255,255,.4)",
+                opacity: rappels === "actifs" ? 0.7 : 1,
+              }}>
+              {rappels === "actifs" ? "🔔 ✓" : "🔔 Rappels"}
+            </button>
+          )}
           <button onClick={() => deconnecter()} className="mono uppercase rounded-lg px-3 py-1.5"
             style={{
               fontSize: 10, letterSpacing: 1, cursor: "pointer",
@@ -1066,6 +1208,16 @@ export default function CarnetParis() {
         {sansStockage && (
           <div className="panel px-4 py-2 mono" style={{ fontSize: 11, color: "var(--attente)" }}>
             Mode aperçu : la sauvegarde et le classement ne sont pas disponibles ici.
+          </div>
+        )}
+
+        {rappelsMsg && (
+          <div className="panel px-4 py-2 mono flex items-center gap-2" style={{ fontSize: 11, color: "var(--encre)" }}>
+            <span className="flex-1">{rappelsMsg}</span>
+            <button onClick={() => setRappelsMsg(null)} aria-label="Fermer"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--dim)", fontSize: 14, lineHeight: 1 }}>
+              ✕
+            </button>
           </div>
         )}
 
