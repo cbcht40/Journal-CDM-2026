@@ -68,6 +68,7 @@ create table public.messages (
   auteur uuid not null default auth.uid() references auth.users(id) on delete cascade,
   pseudo text not null,
   texte text not null,
+  image text,
   cree timestamptz not null default now()
 );
 alter table public.messages enable row level security;

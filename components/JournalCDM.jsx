@@ -418,8 +418,12 @@ export default function CarnetParis() {
   const [joueurVu, setJoueurVu] = useState(null); // cle du joueur consulté
   const [messages, setMessages] = useState([]);
   const [chatTexte, setChatTexte] = useState("");
+  const [chatImage, setChatImage] = useState(null); // data URL de la photo à envoyer
   const [envoiChat, setEnvoiChat] = useState(false);
+  const [prepaImage, setPrepaImage] = useState(false);
+  const [errChat, setErrChat] = useState(null);
   const [chatNonLus, setChatNonLus] = useState(0);
+  const [chatToast, setChatToast] = useState(null); // { pseudo, apercu }
   const finChatRef = useRef(null);
   const [partageOuvert, setPartageOuvert] = useState(false);
   const [partageOpts, setPartageOpts] = useState({ n: true, m: true, p: true, c: true, s: true });
@@ -599,18 +603,33 @@ export default function CarnetParis() {
     const stop = ecouterMessages((msg) => {
       if (!actif) return;
       setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]));
-      setOnglet((ong) => { if (ong !== "chat") setChatNonLus((n) => n + 1); return ong; });
+      setOnglet((ong) => {
+        if (ong !== "chat" && msg.auteur !== profil.cle) {
+          setChatNonLus((n) => n + 1);
+          const apercu = msg.texte ? msg.texte : (msg.image ? "📷 photo" : "");
+          setChatToast({ pseudo: msg.pseudo, apercu });
+        }
+        return ong;
+      });
     });
     return () => { actif = false; stop(); };
   }, [profil]);
 
-  // Sur l'onglet chat : remet le compteur à zéro et descend en bas
+  // La bulle de notif disparaît toute seule après 5 s
+  useEffect(() => {
+    if (!chatToast) return;
+    const t = setTimeout(() => setChatToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [chatToast]);
+
+  // Sur l'onglet chat : recharge (images complètes), remet le compteur à zéro, descend en bas
   useEffect(() => {
     if (onglet === "chat") {
-      setChatNonLus(0);
+      setChatNonLus(0); setChatToast(null);
+      if (supabase && profil) listerMessages().then((m) => setMessages(m)).catch(() => {});
       requestAnimationFrame(() => finChatRef.current?.scrollIntoView({ behavior: "smooth" }));
     }
-  }, [onglet, messages]);
+  }, [onglet, messages.length]);
 
   const stats = useMemo(() => calcStats(paris, depart, recharges), [paris, depart, recharges]);
 
@@ -720,13 +739,22 @@ export default function CarnetParis() {
     setEnvoiTicket(null);
   };
 
+  const ajouterImageChat = async (file) => {
+    setPrepaImage(true); setErrChat(null);
+    try { setChatImage(await compresserAdaptatif(file)); }
+    catch (err) { setErrChat(messagePreuveErreur(err, file)); }
+    setPrepaImage(false);
+  };
+
   const envoyerChat = async () => {
     const texte = chatTexte.trim().slice(0, 280);
-    if (!texte || !profil || envoiChat) return;
-    setEnvoiChat(true);
+    if ((!texte && !chatImage) || !profil || envoiChat) return;
+    setEnvoiChat(true); setErrChat(null);
     try {
-      await envoyerMessage(profil.pseudo, texte);
-      setChatTexte("");
+      const msg = await envoyerMessage(profil.pseudo, texte, chatImage);
+      setChatTexte(""); setChatImage(null);
+      // Affiche tout de suite mon message (au cas où le temps réel tronque l'image)
+      setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]));
       // Notifie les autres (sauf soi-même)
       let monEndpoint = null;
       try {
@@ -737,9 +765,9 @@ export default function CarnetParis() {
       fetch("/api/push/message", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pseudo: profil.pseudo, texte, exclure: monEndpoint }),
+        body: JSON.stringify({ pseudo: profil.pseudo, texte: texte || "📷 a partagé une photo", exclure: monEndpoint }),
       }).catch(() => {});
-    } catch (e) { /* échec d'envoi silencieux, le message n'apparaît pas */ }
+    } catch (e) { setErrChat("Échec de l'envoi. Réessaie."); }
     setEnvoiChat(false);
   };
 
@@ -2057,12 +2085,17 @@ export default function CarnetParis() {
                     <div key={m.id} className="flex flex-col" style={{ alignItems: moi ? "flex-end" : "flex-start" }}>
                       {!moi && <span className="mono" style={{ fontSize: 9, color: "var(--dim)", marginBottom: 2 }}>@{m.pseudo}</span>}
                       <div style={{
-                        maxWidth: "80%", padding: "8px 12px", borderRadius: 14,
+                        maxWidth: "80%", padding: m.image && !m.texte ? 4 : "8px 12px", borderRadius: 14,
                         background: moi ? "var(--pelouse)" : "var(--craie)",
                         color: moi ? "#fff" : "var(--encre)",
                         border: moi ? "1px solid var(--pelouse2)" : "1px solid var(--ligne)",
                         fontSize: 14, lineHeight: 1.35, wordBreak: "break-word",
                       }}>
+                        {m.image && (
+                          <img src={m.image} alt="photo partagée"
+                            onClick={() => setPreuveVue({ titre: "Photo de @" + m.pseudo, image: m.image })}
+                            style={{ maxWidth: "100%", borderRadius: 10, cursor: "pointer", display: "block", marginBottom: m.texte ? 6 : 0 }} />
+                        )}
                         {m.texte}
                       </div>
                       <span className="mono" style={{ fontSize: 8, color: "var(--dim)", marginTop: 2 }}>
@@ -2074,21 +2107,39 @@ export default function CarnetParis() {
               )}
               <div ref={finChatRef} />
             </div>
-            <div className="flex gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--ligne)" }}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); envoyerChat(); } }}>
-              <input type="text" value={chatTexte} maxLength={280} aria-label="Message"
-                placeholder="Écris un message…" autoComplete="off"
-                onChange={(e) => setChatTexte(e.target.value)}
-                className="champ flex-1" />
-              <button onClick={envoyerChat} disabled={!chatTexte.trim() || envoiChat}
-                className="rounded-lg px-4 py-2 font-semibold"
-                style={{
-                  background: "var(--pelouse)", color: "#fff", fontSize: 14, border: "1px solid var(--pelouse2)",
-                  cursor: chatTexte.trim() && !envoiChat ? "pointer" : "not-allowed",
-                  opacity: chatTexte.trim() && !envoiChat ? 1 : 0.45,
-                }}>
-                {envoiChat ? "…" : "Envoyer"}
-              </button>
+            <div className="px-3 py-3" style={{ borderTop: "1px solid var(--ligne)" }}>
+              {chatImage && (
+                <div className="flex items-center gap-2 mb-2">
+                  <img src={chatImage} alt="aperçu" style={{ height: 56, borderRadius: 8, border: "1px solid var(--ligne)" }} />
+                  <button onClick={() => setChatImage(null)} className="mono"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--perdu)", fontSize: 11, textDecoration: "underline" }}>
+                    retirer la photo
+                  </button>
+                </div>
+              )}
+              {errChat && <div className="mono mb-2" style={{ fontSize: 10, color: "var(--perdu)" }}>{errChat}</div>}
+              <div className="flex gap-2"
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); envoyerChat(); } }}>
+                <label className="champ" style={{ cursor: prepaImage ? "wait" : "pointer", display: "flex", alignItems: "center", flexShrink: 0 }}
+                  title="Joindre une photo">
+                  {prepaImage ? "…" : "📷"}
+                  <input type="file" accept="image/*" style={{ display: "none" }} disabled={prepaImage}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) ajouterImageChat(f); e.target.value = ""; }} />
+                </label>
+                <input type="text" value={chatTexte} maxLength={280} aria-label="Message"
+                  placeholder="Écris un message…" autoComplete="off"
+                  onChange={(e) => setChatTexte(e.target.value)}
+                  className="champ flex-1" />
+                <button onClick={envoyerChat} disabled={(!chatTexte.trim() && !chatImage) || envoiChat}
+                  className="rounded-lg px-4 py-2 font-semibold"
+                  style={{
+                    background: "var(--pelouse)", color: "#fff", fontSize: 14, border: "1px solid var(--pelouse2)",
+                    cursor: (chatTexte.trim() || chatImage) && !envoiChat ? "pointer" : "not-allowed",
+                    opacity: (chatTexte.trim() || chatImage) && !envoiChat ? 1 : 0.45,
+                  }}>
+                  {envoiChat ? "…" : "Envoyer"}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2197,6 +2248,25 @@ export default function CarnetParis() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Bulle de notif d'un nouveau message (hors onglet chat) */}
+      {chatToast && (
+        <button onClick={() => { setOnglet("chat"); setChatToast(null); }}
+          className="panel"
+          style={{
+            position: "fixed", left: "50%", bottom: 20, transform: "translateX(-50%)", zIndex: 70,
+            maxWidth: 420, width: "calc(100% - 32px)", textAlign: "left", cursor: "pointer",
+            padding: "10px 14px", display: "flex", alignItems: "center", gap: 10,
+            boxShadow: "0 8px 30px rgba(0,0,0,.18)", border: "1px solid var(--pelouse)",
+          }}>
+          <span style={{ fontSize: 18 }}>💬</span>
+          <span className="min-w-0 flex-1">
+            <span className="font-semibold" style={{ fontSize: 12, display: "block" }}>@{chatToast.pseudo}</span>
+            <span className="truncate" style={{ fontSize: 12, color: "var(--dim)", display: "block" }}>{chatToast.apercu}</span>
+          </span>
+          <span className="mono uppercase" style={{ fontSize: 9, color: "var(--pelouse)", letterSpacing: 1 }}>Voir</span>
+        </button>
       )}
 
       {/* Partage de la carte de stats */}
