@@ -60,6 +60,25 @@ create policy "supprimer ses preuves" on public.preuves
   for delete to authenticated using (joueur = auth.uid());
 ```
 
+2b. **Chat de groupe** — dans le SQL Editor, exécute aussi :
+
+```sql
+create table public.messages (
+  id bigint generated always as identity primary key,
+  auteur uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  pseudo text not null,
+  texte text not null,
+  cree timestamptz not null default now()
+);
+alter table public.messages enable row level security;
+create policy "lecture messages" on public.messages
+  for select to authenticated using (true);
+create policy "ecrire messages" on public.messages
+  for insert to authenticated with check (auteur = auth.uid());
+-- Temps réel (messages qui arrivent en direct)
+alter publication supabase_realtime add table public.messages;
+```
+
 3. **Authentication → Sign In / Providers → Email** : désactive
    **« Confirm email »** (sinon chaque inscription exige un clic dans un
    email, et l'envoi est limité sur le SMTP par défaut).

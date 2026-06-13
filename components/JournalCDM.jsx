@@ -5,6 +5,7 @@ import {
   demanderReinitMdp, changerMotDePasse,
   chargerMoi, sauverMoi, viderMesDonnees, listerJoueurs,
   sauverPreuve, lirePreuve, supprimerPreuve,
+  listerMessages, envoyerMessage, ecouterMessages,
 } from "../lib/supabase";
 import { useState, useEffect, useMemo, useRef } from "react";
 import QRCode from "qrcode";
@@ -415,6 +416,11 @@ export default function CarnetParis() {
   const [errTicket, setErrTicket] = useState(null);
   const [preuveVue, setPreuveVue] = useState(null); // { titre, image|null, erreur? }
   const [joueurVu, setJoueurVu] = useState(null); // cle du joueur consulté
+  const [messages, setMessages] = useState([]);
+  const [chatTexte, setChatTexte] = useState("");
+  const [envoiChat, setEnvoiChat] = useState(false);
+  const [chatNonLus, setChatNonLus] = useState(0);
+  const finChatRef = useRef(null);
   const [partageOuvert, setPartageOuvert] = useState(false);
   const [partageOpts, setPartageOpts] = useState({ n: true, m: true, p: true, c: true, s: true });
   const [lienPartage, setLienPartage] = useState(null);
@@ -585,6 +591,27 @@ export default function CarnetParis() {
   useEffect(() => { if (!chargement && profil) chargerClassement(); }, [chargement, profil]);
   useEffect(() => { if (onglet === "classement" || onglet === "finale") chargerClassement(); }, [onglet]);
 
+  // Chat : chargement initial + abonnement temps réel aux nouveaux messages
+  useEffect(() => {
+    if (!supabase || !profil) return;
+    let actif = true;
+    listerMessages().then((m) => { if (actif) setMessages(m); }).catch(() => {});
+    const stop = ecouterMessages((msg) => {
+      if (!actif) return;
+      setMessages((prev) => (prev.some((x) => x.id === msg.id) ? prev : [...prev, msg]));
+      setOnglet((ong) => { if (ong !== "chat") setChatNonLus((n) => n + 1); return ong; });
+    });
+    return () => { actif = false; stop(); };
+  }, [profil]);
+
+  // Sur l'onglet chat : remet le compteur à zéro et descend en bas
+  useEffect(() => {
+    if (onglet === "chat") {
+      setChatNonLus(0);
+      requestAnimationFrame(() => finChatRef.current?.scrollIntoView({ behavior: "smooth" }));
+    }
+  }, [onglet, messages]);
+
   const stats = useMemo(() => calcStats(paris, depart, recharges), [paris, depart, recharges]);
 
   const joueurs = useMemo(() => {
@@ -691,6 +718,29 @@ export default function CarnetParis() {
       setErrTicket("Échec de l'envoi côté stockage : " + (e?.message || "erreur inconnue") + ". Réessaie.");
     }
     setEnvoiTicket(null);
+  };
+
+  const envoyerChat = async () => {
+    const texte = chatTexte.trim().slice(0, 280);
+    if (!texte || !profil || envoiChat) return;
+    setEnvoiChat(true);
+    try {
+      await envoyerMessage(profil.pseudo, texte);
+      setChatTexte("");
+      // Notifie les autres (sauf soi-même)
+      let monEndpoint = null;
+      try {
+        const reg = await navigator.serviceWorker?.ready;
+        const abo = await reg?.pushManager?.getSubscription();
+        monEndpoint = abo?.endpoint || null;
+      } catch (e) { /* pas d'abonnement */ }
+      fetch("/api/push/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pseudo: profil.pseudo, texte, exclure: monEndpoint }),
+      }).catch(() => {});
+    } catch (e) { /* échec d'envoi silencieux, le message n'apparaît pas */ }
+    setEnvoiChat(false);
   };
 
   const validerBankroll = async (file) => {
@@ -1456,6 +1506,20 @@ export default function CarnetParis() {
             aria-pressed={onglet === "finale"} onClick={() => setOnglet("finale")}>
             🏁 Finale
           </button>
+          <button className={"tab " + (onglet === "chat" ? "actif" : "")}
+            aria-pressed={onglet === "chat"} onClick={() => setOnglet("chat")}
+            style={{ position: "relative" }}>
+            💬 Chat
+            {chatNonLus > 0 && (
+              <span style={{
+                position: "absolute", top: -6, right: -6, minWidth: 18, height: 18, padding: "0 5px",
+                borderRadius: 99, background: "var(--perdu)", color: "#fff", fontSize: 10,
+                display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700,
+              }}>
+                {chatNonLus > 9 ? "9+" : chatNonLus}
+              </span>
+            )}
+          </button>
         </div>
 
         {sansStockage && (
@@ -1971,6 +2035,62 @@ export default function CarnetParis() {
               </>
             )}
           </>
+        )}
+
+        {onglet === "chat" && (
+          <div className="panel flex flex-col" style={{ height: "70vh" }}>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--ligne)" }}>
+              <Titre>Chat du groupe · {joueurs.length} inscrit{joueurs.length > 1 ? "s" : ""}</Titre>
+              <div className="mono" style={{ fontSize: 10, color: "var(--dim)" }}>
+                Visible par tous · les autres reçoivent une notification 🔔
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2">
+              {messages.length === 0 ? (
+                <div className="mono text-center py-8" style={{ fontSize: 11, color: "var(--dim)" }}>
+                  Aucun message. Lance la causette ⚽
+                </div>
+              ) : (
+                messages.map((m) => {
+                  const moi = m.auteur === profil.cle;
+                  return (
+                    <div key={m.id} className="flex flex-col" style={{ alignItems: moi ? "flex-end" : "flex-start" }}>
+                      {!moi && <span className="mono" style={{ fontSize: 9, color: "var(--dim)", marginBottom: 2 }}>@{m.pseudo}</span>}
+                      <div style={{
+                        maxWidth: "80%", padding: "8px 12px", borderRadius: 14,
+                        background: moi ? "var(--pelouse)" : "var(--craie)",
+                        color: moi ? "#fff" : "var(--encre)",
+                        border: moi ? "1px solid var(--pelouse2)" : "1px solid var(--ligne)",
+                        fontSize: 14, lineHeight: 1.35, wordBreak: "break-word",
+                      }}>
+                        {m.texte}
+                      </div>
+                      <span className="mono" style={{ fontSize: 8, color: "var(--dim)", marginTop: 2 }}>
+                        {new Date(m.cree).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={finChatRef} />
+            </div>
+            <div className="flex gap-2 px-3 py-3" style={{ borderTop: "1px solid var(--ligne)" }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); envoyerChat(); } }}>
+              <input type="text" value={chatTexte} maxLength={280} aria-label="Message"
+                placeholder="Écris un message…" autoComplete="off"
+                onChange={(e) => setChatTexte(e.target.value)}
+                className="champ flex-1" />
+              <button onClick={envoyerChat} disabled={!chatTexte.trim() || envoiChat}
+                className="rounded-lg px-4 py-2 font-semibold"
+                style={{
+                  background: "var(--pelouse)", color: "#fff", fontSize: 14, border: "1px solid var(--pelouse2)",
+                  cursor: chatTexte.trim() && !envoiChat ? "pointer" : "not-allowed",
+                  opacity: chatTexte.trim() && !envoiChat ? 1 : 0.45,
+                }}>
+                {envoiChat ? "…" : "Envoyer"}
+              </button>
+            </div>
+          </div>
         )}
 
         <div className="mono text-center pb-4" style={{ fontSize: 10, color: "var(--dim)" }}>
